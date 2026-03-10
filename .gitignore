@@ -1,0 +1,8 @@
+keys
+*.o
+*.d
+linker.lds
+sboot.*
+bl1.bin
+bl1.bin.signed
+tools/bl1tool/bl1tool
