@@ -385,84 +385,39 @@ int verify_signature(uint8_t* buffer, uint32_t bl1_size) {
 
     printf("Parsing public key...\n");
 
-    uint8_t nn[0x100];
-    reverse_bytes((uint32_t*)nn, (uint32_t*)footer->pubkey_bl1.pubkey_n, sizeof(footer->pubkey_bl1.pubkey_n) / 4);
-    BIGNUM *n = BN_bin2bn(nn, sizeof(footer->pubkey_bl1.pubkey_n), NULL);
-    uint8_t ee[4];
-    reverse_bytes((uint32_t*)ee, (uint32_t*)footer->pubkey_bl1.pubkey_e, sizeof(footer->pubkey_bl1.pubkey_e) / 4);
-    BIGNUM *e = BN_bin2bn(ee, sizeof(footer->pubkey_bl1.pubkey_e), NULL);
-
-    if (!n || !e) {
-        fprintf(stderr, "Failed to create BIGNUMs for signature verification!\n");
+    OSSL_PARAM params[3];
+    EVP_PKEY_CTX *kctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
+    if (!kctx) {
+        fprintf(stderr, "EVP_PKEY_CTX_new_from_name failed!\n");
         return 1;
     }
 
-    RSA *rsa = RSA_new();
-    if (!rsa) {
-        fprintf(stderr, "Failed to create RSA structure!\n");
+    if (EVP_PKEY_fromdata_init(kctx) <= 0) {
+        fprintf(stderr, "EVP_PKEY_fromdata_init failed!\n");
+        EVP_PKEY_CTX_free(kctx);
         return 1;
     }
 
-    if (RSA_set0_key(rsa, n, e, NULL) != 1) {
-        fprintf(stderr, "Failed to set RSA key!\n");
-        RSA_free(rsa);
+
+    //Uhhh.. it wants little endian now? No reversing for me, I guess...
+    params[0] = OSSL_PARAM_construct_BN("n", footer->pubkey_bl1.pubkey_n, sizeof(footer->pubkey_bl1.pubkey_n));
+    params[1] = OSSL_PARAM_construct_BN("e", footer->pubkey_bl1.pubkey_e, sizeof(footer->pubkey_bl1.pubkey_e));
+    params[2] = OSSL_PARAM_construct_end();
+
+
+    EVP_PKEY *pkey = NULL;
+    if (EVP_PKEY_fromdata(kctx, &pkey, EVP_PKEY_PUBLIC_KEY, params) <= 0 || !pkey) {
+        fprintf(stderr, "Failed to create EVP_PKEY\n");
+        EVP_PKEY_CTX_free(kctx);
         return 1;
     }
-
-    printf("Modulus (N): ");
-    BN_print_fp(stdout, RSA_get0_n(rsa));
-    printf("\nExponent (E): ");
-    BN_print_fp(stdout, RSA_get0_e(rsa));
-    printf("\n");
-
-
-#if 1
-    printf("Decrypting signature...\n");
-    uint8_t* decrypt_out = nullptr;
-    int rsa_size = RSA_size(rsa);
-
-    decrypt_out = malloc(rsa_size);
-    if (!decrypt_out) {
-        fprintf(stderr, "Memory allocation failed!\n");
-        return 1;
-    }
-
-    uint8_t sig[0x100];
-    reverse_bytes((uint32_t*)sig, (uint32_t*)footer->signature_bl1, sizeof(footer->signature_bl1) / 4);
-
-    memset(decrypt_out, 0, rsa_size);
-    int sig_size = RSA_public_decrypt(0x100, sig, decrypt_out, rsa, RSA_NO_PADDING);
-    if (sig_size < 0) {
-        unsigned long err = ERR_get_error();
-
-        fprintf(stderr, "RSA_public_decrypt failed!\n%s:%s:%s\n", ERR_lib_error_string(err), ERR_func_error_string(err), ERR_reason_error_string(err));
-        free(decrypt_out);
-        return 1;
-    }
-    printf("Size: %d\n", sig_size);
-
-    dump_hex(decrypt_out, rsa_size, "Dump:");
-
-    printf("Verifying signature hash...");
-
-    uint32_t orig_chksum = header->chksum;
-    header->chksum = 0;
-    uint8_t sign_hash[SHA256_DIGEST_LENGTH];
-    SHA256(buffer, (uint8_t*)(&footer->pubkey_bl1) - buffer, (char*)sign_hash);
-    header->chksum = orig_chksum;
-
-    if (RSA_verify_PKCS1_PSS(rsa, sign_hash, EVP_sha256(), decrypt_out, -2 /*-1 aka 32 works too*/)) {
-#else
-    EVP_PKEY *pkey = EVP_PKEY_new();
-    if (!pkey || EVP_PKEY_assign_RSA(pkey, rsa) != 1) {
-      fprintf(stderr, "Failed to assign RSA to EVP_PKEY!\n");
-      return 1;
-    }
+    EVP_PKEY_CTX_free(kctx);
 
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (!mdctx) {
-      fprintf(stderr, "Failed to create MD_CTX\n");
-      return 1;
+        fprintf(stderr, "Failed to create EVP_MD_CTX\n");
+        EVP_PKEY_free(pkey);
+        return 1;
     }
 
     EVP_PKEY_CTX *verify_ctx = NULL;
@@ -471,15 +426,25 @@ int verify_signature(uint8_t* buffer, uint32_t bl1_size) {
             EVP_sha256(),
             NULL,
             pkey) != 1) {
-      fprintf(stderr, "DigestVerifyInit failed\n");
-      return 1;
+        fprintf(stderr, "DigestVerifyInit failed\n");
+        EVP_MD_CTX_free(mdctx);
+        EVP_PKEY_free(pkey);
+        return 1;
     }
 
-    if (EVP_PKEY_CTX_set_rsa_padding(verify_ctx, RSA_PKCS1_PSS_PADDING) <= 0)
-      return 1;
+    if (EVP_PKEY_CTX_set_rsa_padding(verify_ctx, RSA_PKCS1_PSS_PADDING) <= 0) {
+        fprintf(stderr, "EVP_PKEY_CTX_set_rsa_padding failed\n");
+        EVP_MD_CTX_free(mdctx);
+        EVP_PKEY_free(pkey);
+        return 1;
+    }
 
-    if (EVP_PKEY_CTX_set_rsa_pss_saltlen(verify_ctx, -2) <= 0)
-      return 1;
+    if (EVP_PKEY_CTX_set_rsa_pss_saltlen(verify_ctx, -2) <= 0) {
+        fprintf(stderr, "EVP_PKEY_CTX_set_rsa_pss_saltlen failed\n");
+        EVP_MD_CTX_free(mdctx);
+        EVP_PKEY_free(pkey);
+        return 1;
+    }
 
     uint32_t orig_chksum = header->chksum;
     header->chksum = 0;
@@ -491,10 +456,13 @@ int verify_signature(uint8_t* buffer, uint32_t bl1_size) {
     reverse_bytes((uint32_t*)sig, (uint32_t*)footer->signature_bl1, sizeof(footer->signature_bl1) / 4);
 
     if (EVP_DigestVerifyFinal(mdctx, sig, sizeof(sig)) == 1) {
-#endif
+        EVP_MD_CTX_free(mdctx);
+        EVP_PKEY_free(pkey);
         printf("OK!\n");
         return 0;
     } else {
+        EVP_MD_CTX_free(mdctx);
+        EVP_PKEY_free(pkey);
         printf("FAIL!\n");
         return 1;
     }
@@ -565,144 +533,12 @@ int verify_signature_main(int argc, char *argv[], char* cmd) {
 
     free(buffer);
     return ret;
-    return ret;
 }
 
 uint32_t calc_chksum(uint8_t* buffer, uint32_t bl1_size) {
     uint32_t header_hash[SHA256_DIGEST_LENGTH / 4];
     SHA256(&buffer[0x10], bl1_size - 0x10, (char*)header_hash);
     return header_hash[0];
-}
-
-int write_header_main(int argc, char *argv[], char* cmd) {
-    if (argc == 1) {
-        fprintf(stderr, "Usage: TODO!\n", cmd);
-//        fprintf(stderr, "Usage: %s <bl1>\n", cmd);
-        return 1;
-    }
-
-    static struct option long_options[] = {
-        {"input", required_argument, 0, 'i'},
-        {"output", required_argument, 0, 'o'},
-        {"force", no_argument, 0, 'f'},
-        {"in-place", no_argument, 0, 'p'},
-        {"set-size-only", no_argument, 0, 's'},
-        {"update-checksum-only", no_argument, 0, 'c'},
-        {"help", no_argument, 0, 'h'},
-        {0, 0, 0, 0}
-    };
-
-    char* input = NULL;
-    char* output = NULL;
-    uint8_t force_open = 0;
-    uint8_t in_place = 0;
-    uint8_t set_size_only = 0;
-    uint8_t update_checksum_only = 0;
-    optind = 1;
-
-    int opt;
-    int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "i:o:fpsch",
-                                  long_options, &option_index)) != -1) {
-        switch (opt) {
-        case 'i':
-            input = optarg;
-            break;
-        case 'o':
-            output = optarg;
-            break;
-        case 'f':
-            force_open = 1;
-            break;
-        case 'p':
-            in_place = 1;
-            break;
-        case 's':
-            set_size_only = 1;
-            break;
-        case 'c':
-            update_checksum_only = 1;
-            break;
-        case 'h':
-            fprintf(stderr, "Usage: TODO!\n", cmd);
-            return 1;
-            break;
-        case '?':
-            return 1;
-            break;
-        default:
-            fprintf(stderr, "Unknown option\n");
-            return 1;
-        }
-    }
-
-    if (set_size_only && update_checksum_only) {
-        fprintf(stderr, "Both set size only, and update checksum only options are set. What are you trying to do here?\n");
-        return 1;
-    }
-
-    if (optind < argc) {
-        if (input) {
-            fprintf(stderr, "Options parse error!\n");
-            return 1;
-        }
-
-        input = argv[optind++];
-    }
-
-    if (optind < argc) {
-        fprintf(stderr, "Options parse error!\n");
-        return 1;
-    }
-
-    if (!input) {
-        fprintf(stderr, "No input file!\n");
-        return 1;
-    }
-        
-    if (!output && !in_place) {
-        fprintf(stderr, "No output file!\n");
-        return 1;
-    }
-        
-    if (output && in_place) {
-        fprintf(stderr, "Both output file and in-place overwrite specified!\n");
-        return 1;
-    }
-
-    if (in_place)
-        output = input;
-        
-
-    uint32_t bl1_size;
-    uint8_t* buffer;
-    if (!update_checksum_only) {
-        if (open_bl1_noheader(input, &buffer, &bl1_size, force_open, false, 0))
-            return 1;
-    } else {
-        if (open_bl1(input, &buffer, &bl1_size))
-            return 1;
-    }
-
-    bl1_head* header = (bl1_head *)buffer;
-    header->size_in_blocks = bl1_size >> 9;
-
-    if (!set_size_only) {
-          header->chksum = calc_chksum(buffer, bl1_size);
-//        uint32_t header_hash[SHA256_DIGEST_LENGTH / 4];
-//        SHA256(&buffer[0x10], bl1_size - 0x10, (char*)header_hash);
-//        header->chksum = header_hash[0];
-    }
-
-    printf("Header created! Blocks: %u, chksum: %08x\n", header->size_in_blocks, header->chksum);
-
-    printf("Writing output!\n");
-    if (save_fixlen(output, bl1_size, "BL1", buffer)) {
-        free(buffer);
-        return 1;
-    }
-
-    return 0;
 }
 
 int generate_hmac(char* key, uint8_t save_key, uint8_t* pubkey, size_t pubkey_len, uint8_t* out, uint8_t* efuse_out) {
@@ -734,165 +570,6 @@ int generate_hmac(char* key, uint8_t save_key, uint8_t* pubkey, size_t pubkey_le
         if (save_fixlen(efuse_out, 0x20, "EFUSE", efuse_buf))
             return 1;
     }
-    return 0;
-}
-
-int write_hmac_main(int argc, char *argv[], char* cmd) {
-    if (argc == 1) {
-        fprintf(stderr, "Usage: TODO!\n", cmd);
-//        fprintf(stderr, "Usage: %s <bl1>\n", cmd);
-        return 1;
-    }
-
-    static uint32_t long_option = 0;
-    static struct option long_options[] = {
-        {"input", required_argument, 0, 'i'},
-        {"output", required_argument, 0, 'o'},
-        {"key", required_argument, 0, 'k'},
-        {"efuse", required_argument, 0, 'e'},
-        {"hmac-value", required_argument, 0, 'v'},
-        {"save-key", no_argument, &long_option, 1},
-        {"force", no_argument, 0, 'f'},
-        {"in-place", no_argument, 0, 'p'},
-        {"help", no_argument, 0, 'h'},
-        {0, 0, 0, 0}
-    };
-
-    char* input = NULL;
-    char* output = NULL;
-    char* key = NULL;
-    char* efuse = NULL;
-    char* value = NULL;
-    uint8_t save_key = 0;
-    uint8_t force_open = 0;
-    uint8_t in_place = 0;
-    optind = 1;
-
-    int opt;
-    int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "i:o:k:e:v:fph",
-                                  long_options, &option_index)) != -1) {
-        switch (opt) {
-        case 0: //long-only option
-            switch (long_option) {
-                case 1: //save-key
-                    save_key = 1;
-                    break;
-            }
-            break;
-        case 'i':
-            input = optarg;
-            break;
-        case 'o':
-            output = optarg;
-            break;
-        case 'k':
-            key = optarg;
-            break;
-        case 'e':
-            efuse = optarg;
-            break;
-        case 'v':
-            value = optarg;
-            break;
-        case 'f':
-            force_open = 1;
-            break;
-        case 'p':
-            in_place = 1;
-            break;
-        case 'h':
-            fprintf(stderr, "Usage: TODO!\n", cmd);
-            return 1;
-            break;
-        case '?':
-            return 1;
-            break;
-        default:
-            fprintf(stderr, "Unknown option\n");
-            return 1;
-        }
-    }
-
-    if (optind < argc) {
-        if (input) {
-            fprintf(stderr, "Options parse error!\n");
-            return 1;
-        }
-
-        input = argv[optind++];
-    }
-
-    if (optind < argc) {
-        fprintf(stderr, "Options parse error!\n");
-        return 1;
-    }
-
-    if (!input) {
-        fprintf(stderr, "No input file!\n");
-        return 1;
-    }
-        
-    if (!output && !in_place) {
-        fprintf(stderr, "No output file!\n");
-        return 1;
-    }
-        
-    if (output && in_place) {
-        fprintf(stderr, "Both output file and in-place overwrite specified!\n");
-        return 1;
-    }
-        
-    if (!key && save_key) {
-        fprintf(stderr, "You need to specify a filename to save a random key to!\n");
-        return 1;
-    }
-
-    if (value && key) {
-        fprintf(stderr, "You cannot specify a HMAC value and a key at the same time!\n");
-        return 1;
-    }
-
-    if (value && efuse) {
-        fprintf(stderr, "You cannot save the calculated EFUSE when specifying a HMAC value directly!\n");
-        return 1;
-    }
-
-    if (in_place)
-        output = input;
-
-    uint32_t bl1_size;
-    uint8_t* buffer;
-
-    if (open_bl1(input, &buffer, &bl1_size))
-        return 1;
-
-    bl1_footer* footer = (bl1_footer *)&buffer[bl1_size - sizeof(bl1_footer)];
-
-    if (!force_open)
-        for (uint32_t i = 0; i < sizeof(footer->hmac_bl1); i++) {
-            if (footer->hmac_bl1[i] != 0) {
-                fprintf(stderr, "HMAC field not empty!\n");
-                free(buffer);
-                return 1;
-            }
-        }
-
-
-    if (!value) {
-        if (generate_hmac(key, save_key, (char*)&footer->pubkey_bl1, sizeof(footer->pubkey_bl1), footer->hmac_bl1, efuse))
-            return 1;
-    } else {
-        if (open_fixlen(value, 0x20, "HMAC value", footer->hmac_bl1))
-            return 1;
-    }
-
-    printf("Writing output!\n");
-    if (save_fixlen(output, bl1_size, "BL1", buffer)) {
-        free(buffer);
-        return 1;
-    }
-
     return 0;
 }
 
@@ -1062,7 +739,6 @@ int generate_key_main(int argc, char *argv[], char* cmd) {
     EVP_PKEY_CTX *ctx = NULL;
 
     ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
-//    ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);//EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
     if (!ctx) {
         fprintf(stderr, "EVP_PKEY_CTX creation failed!\n");
         return 1;
@@ -1089,14 +765,12 @@ int generate_key_main(int argc, char *argv[], char* cmd) {
         return 1;
     }
 
-    //if (EVP_PKEY_CTX_set_rsa_keygen_pubexp(ctx, pubexp) <= 0) {
     if (EVP_PKEY_CTX_set1_rsa_keygen_pubexp(ctx, pubexp) <= 0) {
         fprintf(stderr, "Setting public key exponent failed!\n");
         EVP_PKEY_CTX_free(ctx);
         BN_free(pubexp);
         return 1;
     }
-//it should now    //pubexp shouldn't be touched after this in theory
     BN_free(pubexp);
 
     if (EVP_PKEY_generate(ctx, &pkey) <= 0) {
@@ -1128,18 +802,19 @@ int generate_key_main(int argc, char *argv[], char* cmd) {
     printf("Writing public key file...\n");
     BIGNUM *n = NULL;
     BIGNUM *e = NULL;
-    uint8_t n_be[0x100];
-    uint8_t e_be[0x4];
 
+    samsung_pubkey pubkey;
+    pubkey.pubkey_n_len = 0x100;
     if ((EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_RSA_N, &n) <= 0) ||
-        (BN_bn2binpad(n, n_be, 0x100) <= 0)) {
+        (BN_bn2lebinpad(n, pubkey.pubkey_n, 0x100) <= 0)) {
         fprintf(stderr, "Getting pubkey N failed!\n");
         EVP_PKEY_free(pkey);
         return 1;
     }
 
+    pubkey.pubkey_e_len = 0x4;
     if ((EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_RSA_E, &e) <= 0) ||
-        (BN_bn2binpad(e, e_be, 0x4) <= 0)) {
+        (BN_bn2lebinpad(e, pubkey.pubkey_e, 0x4) <= 0)) {
         fprintf(stderr, "Getting pubkey E failed!\n");
         EVP_PKEY_free(pkey);
         return 1;
@@ -1157,140 +832,11 @@ int generate_key_main(int argc, char *argv[], char* cmd) {
     BN_free(n);
     BN_free(e);
 
-    samsung_pubkey pubkey;
-    pubkey.pubkey_n_len = 0x100;
-    reverse_bytes((uint32_t*)pubkey.pubkey_n, (uint32_t*)n_be, pubkey.pubkey_n_len / 4);
-    pubkey.pubkey_e_len = 0x4;
-    reverse_bytes((uint32_t*)pubkey.pubkey_e, (uint32_t*)e_be, pubkey.pubkey_e_len / 4);
-
     if (save_fixlen(pubkey_filename, sizeof(samsung_pubkey), "public key", (uint8_t*)&pubkey)) {
         return 1;
     }
 
     return 0;
-}
-
-int write_pubkey_main(int argc, char *argv[], char* cmd) {
-    if (argc == 1) {
-        fprintf(stderr, "Usage: TODO!\n", cmd);
-        return 1;
-    }
-
-    static struct option long_options[] = {
-        {"input", required_argument, 0, 'i'},
-        {"output", required_argument, 0, 'o'},
-        {"pubkey", required_argument, 0, 'u'},
-        {"force", no_argument, 0, 'f'},
-        {"in-place", no_argument, 0, 'p'},
-        {"help", no_argument, 0, 'h'},
-        {0, 0, 0, 0}
-    };
-
-    char* input = NULL;
-    char* output = NULL;
-    char* pubkey_file = NULL;
-    uint8_t force_open = 0;
-    uint8_t in_place = 0;
-    optind = 1;
-
-    int opt;
-    int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "i:o:u:fph",
-                                  long_options, &option_index)) != -1) {
-        switch (opt) {
-        case 'i':
-            input = optarg;
-            break;
-        case 'o':
-            output = optarg;
-            break;
-        case 'u':
-            pubkey_file = optarg;
-            break;
-        case 'f':
-            force_open = 1;
-            break;
-        case 'p':
-            in_place = 1;
-            break;
-        case 'h':
-            fprintf(stderr, "Usage: TODO!\n", cmd);
-            return 1;
-            break;
-        case '?':
-            return 1;
-            break;
-        default:
-            fprintf(stderr, "Unknown option\n");
-            return 1;
-        }
-    }
-
-    if (optind < argc) {
-        if (input) {
-            fprintf(stderr, "Options parse error!\n");
-            return 1;
-        }
-
-        input = argv[optind++];
-    }
-
-    if (optind < argc) {
-        fprintf(stderr, "Options parse error!\n");
-        return 1;
-    }
-
-    if (!input) {
-        fprintf(stderr, "No input file!\n");
-        return 1;
-    }
-        
-    if (!output && !in_place) {
-        fprintf(stderr, "No output file!\n");
-        return 1;
-    }
-        
-    if (output && in_place) {
-        fprintf(stderr, "Both output file and in-place overwrite specified!\n");
-        return 1;
-    }
-
-    if (!pubkey_file) {
-        fprintf(stderr, "No public key specified!\n");
-        return 1;
-    }
-        
-    if (in_place)
-        output = input;
-
-    uint32_t bl1_size;
-    uint8_t* buffer;
-
-    printf("Opening input...\n");
-    if (open_bl1(input, &buffer, &bl1_size))
-        return 1;
-
-    bl1_footer* footer = (bl1_footer *)&buffer[bl1_size - sizeof(bl1_footer)];
-
-    if (!force_open)
-        for (uint32_t i = 0; i < sizeof(footer->pubkey_bl1); i++) {
-            if (((uint8_t*)(&footer->pubkey_bl1))[i] != 0) {
-                fprintf(stderr, "Public key not empty!\n");
-                free(buffer);
-                return 1;
-            }
-        }
-
-    printf("Opening public key...\n");
-    if (open_fixlen(pubkey_file, sizeof(footer->pubkey_bl1), "public key", (uint8_t*)&footer->pubkey_bl1)) {
-        return 1;
-    }
-
-    printf("Writing output...\n");
-    if (save_fixlen(output, bl1_size, "BL1", buffer)) {
-        free(buffer);
-        return 1;
-    }
 }
 
 int sign(uint8_t* buffer, uint32_t bl1_size, char* privkey_file) {
@@ -1311,33 +857,6 @@ int sign(uint8_t* buffer, uint32_t bl1_size, char* privkey_file) {
         return 1;
     }
     fclose(privkey);
-
-#if 0
-    BIGNUM *n = NULL;
-    BIGNUM *e = NULL;
-
-    if (EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_RSA_N, &n) <= 0) {
-        fprintf(stderr, "Getting pubkey N failed!\n");
-        EVP_PKEY_free(pkey);
-        return 1;
-    }
-
-    if (EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_RSA_E, &e) <= 0) {
-        fprintf(stderr, "Getting pubkey E failed!\n");
-        EVP_PKEY_free(pkey);
-        return 1;
-    }
-
-    printf("Pubkey:\n");
-    printf("Modulus (N): ");
-    BN_print_fp(stdout, n);
-    printf("\nExponent (E): ");
-    BN_print_fp(stdout, e);
-    printf("\n");
-
-    BN_free(n);
-    BN_free(e);
-#endif
 
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
     if (!mdctx) {
@@ -1652,71 +1171,14 @@ int build_main(int argc, char *argv[], char* cmd) {
         return 1;
     }
 
-#if 0
-    //For now, we expect a BL1 with final size, with chksum, pubkey, hmac, sigsize, and signature zeroed out
-    uint32_t bl1_size;
-    uint8_t* buffer;
-    if (open_bl1(input, &buffer, &bl1_size))
-        return 1;
-#else
     //We expect a BL1 with header zeroed out, and footer not included in the file.
     uint32_t bl1_size;
     uint8_t* buffer;
     if (open_bl1_noheader(input, &buffer, &bl1_size, force_open, true, force_size))
         return 1;
-#endif
 
     bl1_head* header = (bl1_head *)buffer;
     bl1_footer* footer = (bl1_footer *)&buffer[bl1_size - sizeof(bl1_footer)];
-
-#if 0
-    if (!force_open) {
-        if (header->chksum != 0) {
-            fprintf(stderr, "Checksum not empty!\n");
-            free(buffer);
-            return 1;
-        }
-        for (uint32_t i = 0; i < sizeof(footer->hmac_bl1); i++) {
-            if (footer->hmac_bl1[i] != 0) {
-                fprintf(stderr, "HMAC field not empty!\n");
-                free(buffer);
-                return 1;
-            }
-        }
-        for (uint32_t i = 0; i < sizeof(footer->pubkey_bl1); i++) {
-            if (((uint8_t*)(&footer->pubkey_bl1))[i] != 0) {
-                fprintf(stderr, "Public key not empty!\n");
-                free(buffer);
-                return 1;
-            }
-        }
-        if (footer->sigsize != 0) {
-            fprintf(stderr, "Sigsize not empty!\n");
-            free(buffer);
-            return 1;
-        }
-        for (uint32_t i = 0; i < sizeof(footer->signature_bl1); i++) {
-            if (((uint8_t*)(&footer->signature_bl1))[i] != 0) {
-                fprintf(stderr, "Signature not empty!\n");
-                free(buffer);
-                return 1;
-            }
-        }
-        if (footer->id1 || footer->id2) {
-            fprintf(stderr, "The ID fields are not empty!\n");
-            free(buffer);
-            return 1;
-        }
-        if (pubkey_bl31_file)
-            for (uint32_t i = 0; i < sizeof(footer->pubkey_bl31); i++) {
-                if (((uint8_t*)(&footer->pubkey_bl31))[i] != 0) {
-                    fprintf(stderr, "BL31 public key not empty!\n");
-                    free(buffer);
-                    return 1;
-                }
-            }
-    }
-#endif
 
     printf("Setting ID fields...\n");
     footer->id1 = id1;
@@ -1877,8 +1339,7 @@ int main(int argc, char *argv[]) {
         printf("OpenExyBootchain BL1Tool\n"
                "Available commands:\n"
                "\tverify: options to verify BL1\n"
-               "\twrite_header: write a valid BL1 header to file, including size and checksum\n"
-               "\twrite_hmac: asdasdasdasgasjgjgsaéljasgljlésgajasgélsagjaésljgasélgasjéééé\n"
+               "\tTODO rest\n"
                 );
         return 1;
     }
@@ -1892,9 +1353,6 @@ int main(int argc, char *argv[]) {
 
     const struct command cmds[] = {
         {"verify", verify_main},
-        {"write_header", write_header_main},
-        {"write_hmac", write_hmac_main},
-        {"write_pubkey", write_pubkey_main},
         {"generate_key", generate_key_main},
         {"generate_hmac", generate_hmac_main},
         {"sign", sign_main},

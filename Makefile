@@ -37,7 +37,7 @@ KEYS    := $(PRIVKEY) $(PUBKEY) $(HMAC) $(EFUSE)
 
 .PHONY: newkeys
 
-newkeys: tools/bl1tool
+newkeys: $(bl1tool_BIN)
 	tools/bl1tool/bl1tool generate_key -r $(DEFAULT_PRIVKEY) -u $(DEFAULT_PUBKEY)
 	tools/bl1tool/bl1tool generate_hmac -e $(DEFAULT_EFUSE) -p $(DEFAULT_PUBKEY) -o $(DEFAULT_HMAC)
 
