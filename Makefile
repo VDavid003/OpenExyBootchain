@@ -1,4 +1,12 @@
 CROSS_COMPILE?=aarch64-linux-gnu-
+ARCH 	:= arm64
+
+#helpers for KBuild, taken from Linux
+include Makefile.kbuild
+ifndef mixed-build
+ifndef config-build
+#end of helpers for KBuild
+
 TARGET_CC:=$(CROSS_COMPILE)gcc
 TARGET_CPP:=$(CROSS_COMPILE)cpp
 TARGET_LD:=$(CROSS_COMPILE)ld
@@ -13,12 +21,6 @@ $(foreach t,$(TOOLS),\
 )
 
 all: bl1.bin.signed
-
-.PHONY: all
-
-# Needed for next rule to work properly, we need to always run the sub-make for tools,
-# but we don't want the stuff depending on those tools to always be considered out of date.
-FORCE:
 
 #Actually be able to build tools
 $(TOOLS_FULLPATH): FORCE
@@ -48,33 +50,73 @@ bl1.bin.signed: bl1.bin $(bl1tool_BIN) $(KEYS)
 	tools/bl1tool/bl1tool verify signature $@ || rm $@
 	tools/bl1tool/bl1tool verify checksum $@ || rm $@
 
-#dependency thing
-TARGET_CFLAGS += -MMD -MP
+PHONY += built-in.a
 
-
-OBJS:=test.o test2.o
-
+built-in.a: $(build-dir)
 
 bl1.bin: bl1.o
 	$(TARGET_OBJCPY) -O binary $< $@
 
-bl1.o: $(OBJS) linker.lds
-	$(TARGET_LD) $(OBJS) -o $@ --script=linker.lds
+bl1.o: linker.lds built-in.a
+	$(TARGET_LD) --whole-archive built-in.a -o $@ --script=linker.lds
 
 linker.lds: linker.lds.S
-	$(CPP) $< -P -o $@
+	$(TARGET_CPP) $< -P -o $@
 
-%.o: %.S
-	$(TARGET_CC) $(TARGET_CFLAGS) -c -o $@ $<
+# Directories & files removed with 'make clean'
+CLEAN_FILES += bl1.bin.signed bl1.bin
 
-%.o: %.c
-	$(TARGET_CC) $(TARGET_CFLAGS) -c -o $@ $<
+# Directories & files removed with 'make mrproper'
+MRPROPER_FILES += include/config include/generated          \
+		  .config .config.old
+	       
+#prepare removed!!!
+PHONY += $(build-dir)
+$(build-dir):
+	$(Q)$(MAKE) $(build)=$@ need-builtin=1 need-modorder=1 $(single-goals)
 
-#dependency thing
--include $(OBJS:.o=.d)
 
-clean :
-	-rm -f *.o bl1.bin.signed
+# clean - Delete most
+#
+clean: private rm-files := $(CLEAN_FILES)
+	       
+# mrproper - Delete all generated files, including .config
+#
+mrproper: private rm-files := $(MRPROPER_FILES)
+mrproper-dirs      := $(addprefix _mrproper_,scripts)
+
+PHONY += $(mrproper-dirs) mrproper
+$(mrproper-dirs):
+	$(Q)$(MAKE) $(clean)=$(patsubst _mrproper_%,%,$@)
+
+mrproper: clean $(mrproper-dirs)
+	$(call cmd,rmfiles)
+
+clean-dirs := $(addprefix _clean_, $(clean-dirs))
+PHONY += $(clean-dirs) clean
+$(clean-dirs):
+	$(Q)$(MAKE) $(clean)=$(patsubst _clean_%,%,$@)
+
+clean: $(clean-dirs)
+	$(call cmd,rmfiles)
+	@find . $(RCS_FIND_IGNORE) \
+		\( -name '*.[od]' \
+		\) -type f -print \
+		| xargs rm -rf
 	$(MAKE) -C tools clean
+#last line to be retired later
 
 .PHONY: clean
+
+quiet_cmd_rmfiles = $(if $(wildcard $(rm-files)),CLEAN   $(wildcard $(rm-files)))
+      cmd_rmfiles = rm -rf $(rm-files)
+
+endif # config-build
+endif # mixed-build
+
+PHONY += FORCE
+FORCE:
+
+# Declare the contents of the PHONY variable as phony.  We keep that
+# information in a variable so we can use it in if_changed and friends.
+.PHONY: $(PHONY)

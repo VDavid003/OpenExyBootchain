@@ -3,6 +3,9 @@
 typedef uint32_t (*load_bl1_usb)(uint32_t load_addr);
 
 /*_Noreturn*/ void c_entry() {
+#ifdef CONFIG_TEST
+	make_compile_fail;
+#endif
 	//TODO warm-boot?
 	//TODO status bits?
 	//TODO 7870 stock sets up some IRAM function ptrs. They don't seem to be neccessary for USB boot though...

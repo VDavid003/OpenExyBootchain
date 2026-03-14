@@ -1,8 +1,12 @@
 keys
 *.o
 *.d
+.*
+*.a
 linker.lds
 sboot.*
 bl1.bin
 bl1.bin.signed
 tools/bl1tool/bl1tool
+/include/config/
+/include/generated/
