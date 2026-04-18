@@ -1,6 +1,4 @@
 mainmenu "OpenExyBootchain Configuration"
 
-config TEST
-	bool "TEST CONFIG"
-	help
-	  This a test config to see if KBuild/KConfig works.
+source "boards/Kconfig"
+source "platforms/Kconfig"

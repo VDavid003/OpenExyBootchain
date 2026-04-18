@@ -1,0 +1,43 @@
+choice
+	prompt "Board Select"
+
+config BOARD_A3Y17LTE
+	bool "Samsung Galaxy A3 (2017) - A3Y17LTE"
+        select SOC_EXYNOS7870
+
+config BOARD_JACKPOTLTE
+	bool "Samsung Galaxy A8 (2018) - JACKPOTLTE"
+        select SOC_EXYNOS7885
+
+endchoice
+
+config BL1_FOOTER_MODEL_ID1
+	string
+	help
+	  This option should contain the first part of the MODEL ID in BL1 footer.
+
+config BL31_PUBKEY_FILE
+	string "BL31 Public Key file"
+	help
+	  Path to public key for next stage after BL1. Will be embedded in BL1 footer.
+
+
+if BOARD_A3Y17LTE
+
+config BL1_FOOTER_MODEL_ID1
+	default "0x20"
+
+config BL31_PUBKEY_FILE
+	default "blobs/a3y17lte_bl31_pubkey"
+
+endif
+
+if BOARD_JACKPOTLTE
+
+config BL1_FOOTER_MODEL_ID1
+	default "0x4E"
+
+config BL31_PUBKEY_FILE
+	default "blobs/jackpotlte_bl31_pubkey"
+
+endif

@@ -1,0 +1,10 @@
+config SOC
+	string
+	help
+	  String representation of SoC (lowercase, for directories/files)
+
+config SOC_EXYNOS7870
+	bool
+
+config SOC_EXYNOS7885
+	bool

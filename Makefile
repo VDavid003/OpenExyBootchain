@@ -45,7 +45,7 @@ newkeys: $(bl1tool_BIN)
 
 
 bl1.bin.signed: bl1.bin $(bl1tool_BIN) $(KEYS)
-	tools/bl1tool/bl1tool build -r $(PRIVKEY) -u $(PUBKEY) $< -m $(HMAC) --id1 0x20 --pubkey_bl31 sboot.bin.1.bin.bl31pubkey --force_size 0x2000 -o $@
+	tools/bl1tool/bl1tool build -r $(PRIVKEY) -u $(PUBKEY) $< -m $(HMAC) --id1 $(CONFIG_BL1_FOOTER_MODEL_ID1) --pubkey_bl31 $(CONFIG_BL31_PUBKEY_FILE) --force_size 0x2000 -o $@
 	tools/bl1tool/bl1tool verify pubkey -e $(EFUSE) $@ || rm $@
 	tools/bl1tool/bl1tool verify signature $@ || rm $@
 	tools/bl1tool/bl1tool verify checksum $@ || rm $@

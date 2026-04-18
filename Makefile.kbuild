@@ -138,6 +138,10 @@ KBUILD_BUILTIN := y
 export KBUILD_BUILTIN
 
 ifdef need-config
+include $(objtree)/include/config/auto.conf
+endif
+
+ifdef need-config
 # Read in dependencies to all Kconfig* files, make sure to run syncconfig if
 # changes are detected. This should be included after arch/$(SRCARCH)/Makefile
 # because some architectures define CROSS_COMPILE there.
