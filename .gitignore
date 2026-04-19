@@ -7,6 +7,7 @@ linker.lds
 sboot.*
 bl1.bin
 bl1.bin.signed
+bl1.bin.unsigned
 tools/bl1tool/bl1tool
 /include/config/
 /include/generated/

@@ -1053,6 +1053,7 @@ int build_main(int argc, char *argv[], char* cmd) {
         {"id2", required_argument, &long_option, 2},
         {"pubkey_bl31", required_argument, &long_option, 3},
         {"force_size", required_argument, &long_option, 4},
+        {"unsigned", no_argument, &long_option, 5},
         {"force", no_argument, 0, 'f'},
         {"in-place", no_argument, 0, 'p'},
         {"help", no_argument, 0, 'h'},
@@ -1070,6 +1071,7 @@ int build_main(int argc, char *argv[], char* cmd) {
     uint16_t id2 = 0;
     char* pubkey_bl31_file = NULL;
     uint32_t force_size = 0;
+    uint8_t do_sign = 1;
     optind = 1;
 
     int opt;
@@ -1090,6 +1092,9 @@ int build_main(int argc, char *argv[], char* cmd) {
                     break;
                 case 4: //forced size
                     force_size = strtoul(optarg, NULL, 0);
+                    break;
+		case 5: //unsigned
+		    do_sign = 0;
                     break;
             }
             break;
@@ -1156,19 +1161,26 @@ int build_main(int argc, char *argv[], char* cmd) {
         return 1;
     }
 
-    if (!privkey_file) {
-        fprintf(stderr, "No private key specified!\n");
-        return 1;
-    }
+    if (do_sign) {
+	    if (!privkey_file) {
+		fprintf(stderr, "No private key specified!\n");
+		return 1;
+	    }
 
-    if (!pubkey_file) {
-        fprintf(stderr, "No private key specified!\n");
-        return 1;
-    }
+	    if (!pubkey_file) {
+		fprintf(stderr, "No public key specified!\n");
+		return 1;
+	    }
 
-    if (!hmac_file) {
-        fprintf(stderr, "No HMAC specified!\n");
-        return 1;
+	    if (!hmac_file) {
+		fprintf(stderr, "No HMAC specified!\n");
+		return 1;
+	    }
+    } else {
+	    if (privkey_file || pubkey_file || hmac_file || pubkey_bl31_file || id1 || id2) {
+		fprintf(stderr, "Unsigned mode specified, but private key, public key, HMAC, BL31 public key, or a model ID field is specified!\n");
+		return 1;
+	    }
     }
 
     //We expect a BL1 with header zeroed out, and footer not included in the file.
@@ -1178,40 +1190,42 @@ int build_main(int argc, char *argv[], char* cmd) {
         return 1;
 
     bl1_head* header = (bl1_head *)buffer;
-    bl1_footer* footer = (bl1_footer *)&buffer[bl1_size - sizeof(bl1_footer)];
+    if (do_sign) {
+	    bl1_footer* footer = (bl1_footer *)&buffer[bl1_size - sizeof(bl1_footer)];
 
-    printf("Setting ID fields...\n");
-    footer->id1 = id1;
-    footer->id2 = id2;
+	    printf("Setting ID fields...\n");
+	    footer->id1 = id1;
+	    footer->id2 = id2;
 
-    if (pubkey_bl31_file) {
-        printf("Adding BL31 public key...\n");
-        if (open_fixlen(pubkey_bl31_file, sizeof(footer->pubkey_bl31), "BL31 public key", (uint8_t*)&footer->pubkey_bl31)) {
-            free(buffer);
-            return 1;
-        }
+	    if (pubkey_bl31_file) {
+		printf("Adding BL31 public key...\n");
+		if (open_fixlen(pubkey_bl31_file, sizeof(footer->pubkey_bl31), "BL31 public key", (uint8_t*)&footer->pubkey_bl31)) {
+		    free(buffer);
+		    return 1;
+		}
+	    }
+
+	    //could be generated from private key too! maybe do that?
+	    printf("Adding public key...\n");
+	    if (open_fixlen(pubkey_file, sizeof(footer->pubkey_bl1), "public key", (uint8_t*)&footer->pubkey_bl1)) {
+		free(buffer);
+		return 1;
+	    }
+
+	    printf("Adding HMAC...\n");
+	    if (open_fixlen(hmac_file, sizeof(footer->hmac_bl1), "HMAC value", footer->hmac_bl1)) {
+		free(buffer);
+		return 1;
+	    }
+
+	    footer->sigsize = 0x100;
+
+	    if (sign(buffer, bl1_size, privkey_file)) {
+		free(buffer);
+		return 1;
+	    }
+
     }
-
-    //could be generated from private key too! maybe do that?
-    printf("Adding public key...\n");
-    if (open_fixlen(pubkey_file, sizeof(footer->pubkey_bl1), "public key", (uint8_t*)&footer->pubkey_bl1)) {
-        free(buffer);
-        return 1;
-    }
-
-    printf("Adding HMAC...\n");
-    if (open_fixlen(hmac_file, sizeof(footer->hmac_bl1), "HMAC value", footer->hmac_bl1)) {
-        free(buffer);
-        return 1;
-    }
-
-    footer->sigsize = 0x100;
-
-    if (sign(buffer, bl1_size, privkey_file)) {
-        free(buffer);
-        return 1;
-    }
-
     printf("Calculating checksum...\n");
     header->chksum = calc_chksum(buffer, bl1_size);
 

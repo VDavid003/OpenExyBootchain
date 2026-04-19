@@ -50,6 +50,10 @@ bl1.bin.signed: bl1.bin $(bl1tool_BIN) $(KEYS)
 	tools/bl1tool/bl1tool verify signature $@ || rm $@
 	tools/bl1tool/bl1tool verify checksum $@ || rm $@
 
+bl1.bin.unsigned: bl1.bin $(bl1tool_BIN)
+	tools/bl1tool/bl1tool build $< --force_size 0x2000 --unsigned -o $@
+	tools/bl1tool/bl1tool verify checksum $@ || rm $@
+
 PHONY += built-in.a
 
 built-in.a: $(build-dir)
