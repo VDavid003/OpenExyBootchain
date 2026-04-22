@@ -9,6 +9,10 @@ config BOARD_JACKPOTLTE
 	bool "Samsung Galaxy A8 (2018) - JACKPOTLTE"
         select SOC_EXYNOS7885
 
+config BOARD_A50
+	bool "Samsung Galaxy A50"
+        select SOC_EXYNOS9610
+
 endchoice
 
 config BL1_FOOTER_MODEL_ID1
@@ -39,5 +43,15 @@ config BL1_FOOTER_MODEL_ID1
 
 config BL31_PUBKEY_FILE
 	default "blobs/jackpotlte_bl31_pubkey"
+
+endif
+
+if BOARD_A50
+
+config BL1_FOOTER_MODEL_ID1
+	default "0x65"
+
+config BL31_PUBKEY_FILE
+	default "blobs/a50_bl31_pubkey"
 
 endif

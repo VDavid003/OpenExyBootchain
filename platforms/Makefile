@@ -1,2 +1,3 @@
 obj-$(CONFIG_SOC_EXYNOS7870)	+= exynos7870.o
 obj-$(CONFIG_SOC_EXYNOS7885)	+= exynos7885.o
+obj-$(CONFIG_SOC_EXYNOS9610)	+= exynos9610.o
