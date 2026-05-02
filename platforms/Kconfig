@@ -12,10 +12,26 @@ config BL1_LOAD_ADDRESS
 	help
 	  This option should contain the address where BL1 will be loaded to.
 
+config BL31_LOAD_ADDRESS
+	hex
+	help
+	  This option should contain the address where BL31 will be loaded to.
+
+config IRAM_END_ADDRESS
+	hex
+	help
+	  This option should contain the end address of iRAM.
+
 if SOC_EXYNOS7870
 
 config BL1_LOAD_ADDRESS
 	default 0x02021800
+
+config BL31_LOAD_ADDRESS
+	default 0x02024000
+
+config IRAM_END_ADDRESS
+	default 0x0206D000
 
 endif
 
@@ -24,11 +40,23 @@ if SOC_EXYNOS7885
 config BL1_LOAD_ADDRESS
 	default 0x02021800
 
+config BL31_LOAD_ADDRESS
+	default 0x02024000
+
+config IRAM_END_ADDRESS
+	default 0x0206D000
+
 endif
 
 if SOC_EXYNOS9610
 
 config BL1_LOAD_ADDRESS
 	default 0x02021800
+
+config BL31_LOAD_ADDRESS
+	default 0x02024000
+
+config IRAM_END_ADDRESS
+	default 0x0206D000
 
 endif

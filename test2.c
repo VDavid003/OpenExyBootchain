@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include "bootrom_interfaces.h"
 
+#include "include/generated/autoconf.h"
+
 extern void platform_init();
 
 /*_Noreturn*/ void c_entry() {
@@ -15,11 +17,11 @@ extern void platform_init();
 
 	//TODO support two boot devices, other boot devices, maybe save checksum, zero it out for signature check
 	//Load BL31 from USB
-	load_from_usb(0x02024000, 0x0206d000 - 0x02024000);
+	load_from_usb(CONFIG_BL31_LOAD_ADDRESS, CONFIG_IRAM_END_ADDRESS - CONFIG_BL31_LOAD_ADDRESS);
 	//TODO verify BL31 (checksum and/or signature based on secureboot config)
 
 	//TODO 7870 stock does PMIC init, though it doesn't seem to be required at least for USB boot...
 
 	//Jump to BL31
-	((void(*)())0x02024010)();
+	((void(*)())CONFIG_BL31_LOAD_ADDRESS + 0x10)();
 }
