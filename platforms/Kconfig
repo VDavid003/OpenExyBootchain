@@ -6,3 +6,29 @@ config SOC_EXYNOS7885
 
 config SOC_EXYNOS9610
 	bool
+
+config BL1_LOAD_ADDRESS
+	hex
+	help
+	  This option should contain the address where BL1 will be loaded to.
+
+if SOC_EXYNOS7870
+
+config BL1_LOAD_ADDRESS
+	default 0x02021800
+
+endif
+
+if SOC_EXYNOS7885
+
+config BL1_LOAD_ADDRESS
+	default 0x02021800
+
+endif
+
+if SOC_EXYNOS9610
+
+config BL1_LOAD_ADDRESS
+	default 0x02021800
+
+endif
