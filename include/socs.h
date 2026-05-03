@@ -7,6 +7,8 @@
 #define SOC_HEADER(x) <socs/exynos7885/x>
 #elif CONFIG_SOC_EXYNOS9610
 #define SOC_HEADER(x) <socs/exynos9610/x>
+#elif CONFIG_SOC_EXYNOS9830
+#define SOC_HEADER(x) <socs/exynos9830/x>
 #else
 #error "SOC_HEADER undefined for platform"
 #endif

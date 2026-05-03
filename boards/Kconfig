@@ -13,6 +13,10 @@ config BOARD_A50
 	bool "Samsung Galaxy A50"
         select SOC_EXYNOS9610
 
+config BOARD_X1S
+	bool "Samsung Galaxy S20 5G"
+	select SOC_EXYNOS9830
+
 endchoice
 
 config BL1_FOOTER_MODEL_ID1
@@ -53,5 +57,15 @@ config BL1_FOOTER_MODEL_ID1
 
 config BL31_PUBKEY_FILE
 	default "blobs/a50_bl31_pubkey"
+
+endif
+
+if BOARD_X1S
+
+config BL1_FOOTER_MODEL_ID1
+	default "0x13D"
+
+config BL31_PUBKEY_FILE
+	default "blobs/x1s_bl31_pubkey"
 
 endif
